@@ -134,6 +134,12 @@ jobs:
           name: docker-image
           path: /tmp/
 
+      - name: List downloaded files
+        run: |
+          echo "Files in /tmp/:"
+          ls -la /tmp/
+          echo "Looking for image file: ${{ needs.build.outputs.image_file }}"
+
       - name: Copy Docker image via SCP
         uses: appleboy/scp-action@v0.1.7
         with:
@@ -143,8 +149,9 @@ jobs:
           key: ${{ secrets.KEY }}
           port: ${{ secrets.PORT }}
           source: '/tmp/${{ needs.build.outputs.image_file }}'
-          target: '/tmp/shiroi'
-          strip_components: 1
+          target: '/tmp/shiroi/'
+          overwrite: true
+          rm: false
 
       - name: Deploy Docker container via SSH
         uses: appleboy/ssh-action@master
@@ -165,12 +172,20 @@ jobs:
             SHA_SHORT="${{ needs.build.outputs.sha_short }}"
 
             echo "Deploying Docker image: $IMAGE_FILE"
+            echo "Current user: $(whoami)"
+            echo "Current directory: $(pwd)"
+            echo "Docker version: $(docker --version)"
 
             # 确保目录存在
             mkdir -p /tmp/shiroi
 
             # 加载 Docker 镜像
             cd /tmp/shiroi
+            if [ ! -f "$IMAGE_FILE" ]; then
+              echo "Error: Docker image file $IMAGE_FILE not found"
+              ls -la /tmp/shiroi/
+              exit 1
+            fi
             docker load -i $IMAGE_FILE
 
             # 停止并删除旧容器（如果存在）
