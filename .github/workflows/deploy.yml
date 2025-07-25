@@ -144,8 +144,7 @@ jobs:
         with:
           host: ${{ secrets.HOST }}
           username: ${{ secrets.USER }}
-          password: ${{ secrets.PASSWORD }}
-          key: ${{ secrets.KEY }}
+          key: ${{ secrets.SSH_PRIVATE_KEY }}
           port: ${{ secrets.PORT }}
           script: |
             # Ensure target directory exists
@@ -153,18 +152,12 @@ jobs:
 
       - name: Transfer Docker image
         run: |
-          # Setup SSH key if provided
-          if [ -n "${{ secrets.KEY }}" ]; then
-            mkdir -p ~/.ssh
-            echo "${{ secrets.KEY }}" > ~/.ssh/id_rsa
-            chmod 600 ~/.ssh/id_rsa
-            ssh-keyscan -p ${{ secrets.PORT || 22 }} ${{ secrets.HOST }} >> ~/.ssh/known_hosts
-            TRANSFER_CMD="rsync -avz -e 'ssh -i ~/.ssh/id_rsa -p ${{ secrets.PORT || 22 }}' /tmp/${{ needs.build.outputs.image_file }} ${{ secrets.USER }}@${{ secrets.HOST }}:/tmp/shiroi/"
-          else
-            # Use sshpass for password authentication
-            sudo apt-get update && sudo apt-get install -y sshpass rsync
-            TRANSFER_CMD="sshpass -p '${{ secrets.PASSWORD }}' rsync -avz -e 'ssh -p ${{ secrets.PORT || 22 }} -o StrictHostKeyChecking=no' /tmp/${{ needs.build.outputs.image_file }} ${{ secrets.USER }}@${{ secrets.HOST }}:/tmp/shiroi/"
-          fi
+          # Setup SSH key
+          mkdir -p ~/.ssh
+          echo "${{ secrets.SSH_PRIVATE_KEY }}" > ~/.ssh/id_rsa
+          chmod 600 ~/.ssh/id_rsa
+          ssh-keyscan -p ${{ secrets.PORT || 22 }} ${{ secrets.HOST }} >> ~/.ssh/known_hosts
+          TRANSFER_CMD="rsync -avz -e 'ssh -i ~/.ssh/id_rsa -p ${{ secrets.PORT || 22 }}' /tmp/${{ needs.build.outputs.image_file }} ${{ secrets.USER }}@${{ secrets.HOST }}:/tmp/shiroi/"
 
           echo "Transferring /tmp/${{ needs.build.outputs.image_file }} to remote server..."
           eval $TRANSFER_CMD
@@ -182,8 +175,7 @@ jobs:
           command_timeout: 10m
           host: ${{ secrets.HOST }}
           username: ${{ secrets.USER }}
-          password: ${{ secrets.PASSWORD }}
-          key: ${{ secrets.KEY }}
+          key: ${{ secrets.SSH_PRIVATE_KEY }}
           port: ${{ secrets.PORT }}
           script: |
             set -e
