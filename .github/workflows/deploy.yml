@@ -119,7 +119,7 @@ jobs:
       - name: Cache Docker image
         uses: actions/cache/save@v4
         with:
-          path: ${{ steps.store.outputs.image_file }}
+          path: /tmp/${{ steps.store.outputs.image_file }}
           key: docker-image-${{ github.run_number }}-${{ steps.store.outputs.sha_short }}
 
   deploy:
@@ -130,14 +130,14 @@ jobs:
       - name: Restore Docker image from cache
         uses: actions/cache/restore@v4
         with:
-          path: ${{ needs.build.outputs.image_file }}
+          path: /tmp/${{ needs.build.outputs.image_file }}
           key: docker-image-${{ github.run_number }}-${{ needs.build.outputs.sha_short }}
           fail-on-cache-miss: true
 
       - name: List downloaded files
         run: |
-          ls -la
-          echo "Looking for image file: ${{ needs.build.outputs.image_file }}"
+          ls -la /tmp
+          echo "Looking for image file: /tmp/${{ needs.build.outputs.image_file }}"
 
       - name: Copy Docker image via rsync
         uses: appleboy/ssh-action@master
@@ -159,14 +159,14 @@ jobs:
             echo "${{ secrets.KEY }}" > ~/.ssh/id_rsa
             chmod 600 ~/.ssh/id_rsa
             ssh-keyscan -p ${{ secrets.PORT || 22 }} ${{ secrets.HOST }} >> ~/.ssh/known_hosts
-            TRANSFER_CMD="rsync -avz -e 'ssh -i ~/.ssh/id_rsa -p ${{ secrets.PORT || 22 }}' ${{ needs.build.outputs.image_file }} ${{ secrets.USER }}@${{ secrets.HOST }}:/tmp/shiroi/"
+            TRANSFER_CMD="rsync -avz -e 'ssh -i ~/.ssh/id_rsa -p ${{ secrets.PORT || 22 }}' /tmp/${{ needs.build.outputs.image_file }} ${{ secrets.USER }}@${{ secrets.HOST }}:/tmp/shiroi/"
           else
             # Use sshpass for password authentication
             sudo apt-get update && sudo apt-get install -y sshpass rsync
-            TRANSFER_CMD="sshpass -p '${{ secrets.PASSWORD }}' rsync -avz -e 'ssh -p ${{ secrets.PORT || 22 }} -o StrictHostKeyChecking=no' ${{ needs.build.outputs.image_file }} ${{ secrets.USER }}@${{ secrets.HOST }}:/tmp/shiroi/"
+            TRANSFER_CMD="sshpass -p '${{ secrets.PASSWORD }}' rsync -avz -e 'ssh -p ${{ secrets.PORT || 22 }} -o StrictHostKeyChecking=no' /tmp/${{ needs.build.outputs.image_file }} ${{ secrets.USER }}@${{ secrets.HOST }}:/tmp/shiroi/"
           fi
 
-          echo "Transferring ${{ needs.build.outputs.image_file }} to remote server..."
+          echo "Transferring /tmp/${{ needs.build.outputs.image_file }} to remote server..."
           eval $TRANSFER_CMD
 
           if [ $? -eq 0 ]; then
