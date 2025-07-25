@@ -1,0 +1,256 @@
+name: Build and Deploy Docker Image
+
+on:
+  push:
+    branches:
+      - main
+  # schedule:
+  #   - cron: '0 3 * * *'
+
+  repository_dispatch:
+    types: [trigger-workflow]
+
+permissions: write-all
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  HASH_FILE: build_hash
+  IMAGE_NAME: shiroi
+  IMAGE_TAG: latest
+
+jobs:
+  prepare:
+    name: Prepare
+    runs-on: ubuntu-latest
+    if: ${{ github.event.head_commit.message != 'Update hash file' }}
+
+    outputs:
+      hash_content: ${{ steps.read_hash.outputs.hash_content }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Read HASH_FILE content
+        id: read_hash
+        run: |
+          content=$(cat ${{ env.HASH_FILE }}) || true
+          echo "hash_content=$content" >> "$GITHUB_OUTPUT"
+
+  check:
+    name: Check Should Rebuild
+    runs-on: ubuntu-latest
+    needs: prepare
+    outputs:
+      canceled: ${{ steps.use_content.outputs.canceled }}
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          repository: innei-dev/shiroi
+          token: ${{ secrets.GH_PAT }} # `GH_PAT` is a secret that contains your PAT
+          fetch-depth: 0
+          lfs: true
+
+      - name: Use content from prev job and compare
+        id: use_content
+        env:
+          FILE_HASH: ${{ needs.prepare.outputs.hash_content }}
+        run: |
+          file_hash=$FILE_HASH
+          current_hash=$(git rev-parse --short HEAD)
+          echo "File Hash: $file_hash"
+          echo "Current Git Hash: $current_hash"
+          if [ "$file_hash" == "$current_hash" ]; then
+            echo "Hashes match. Stopping workflow."
+            echo "canceled=true" >> $GITHUB_OUTPUT
+          else
+            echo "Hashes do not match. Continuing workflow."
+          fi
+
+  build:
+    name: Build Docker Image
+    runs-on: ubuntu-latest
+    needs: check
+    if: ${{needs.check.outputs.canceled != 'true'}}
+
+    outputs:
+      sha_short: ${{ steps.store.outputs.sha_short }}
+      branch: ${{ steps.store.outputs.branch }}
+      image_file: ${{ steps.store.outputs.image_file }}
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          repository: innei-dev/shiroi
+          token: ${{ secrets.GH_PAT }} # `GH_PAT` is a secret that contains your PAT
+          fetch-depth: 1
+          lfs: true
+
+      - name: Checkout LFS objects
+        run: git lfs checkout
+
+      - name: Store artifact commit version
+        shell: bash
+        id: store
+        run: |
+          sha_short=$(git rev-parse --short HEAD)
+          branch_name=$(git rev-parse --abbrev-ref HEAD)
+          image_file="${{ env.IMAGE_NAME }}-${sha_short}.tar"
+          echo "sha_short=$sha_short" >> "$GITHUB_OUTPUT"
+          echo "branch=$branch_name" >> "$GITHUB_OUTPUT"
+          echo "image_file=$image_file" >> "$GITHUB_OUTPUT"
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build Docker image
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: ./Dockerfile
+          push: false
+          tags: ${{ env.IMAGE_NAME }}:${{ steps.store.outputs.sha_short }},${{ env.IMAGE_NAME }}:${{ env.IMAGE_TAG }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+          outputs: type=docker,dest=/tmp/${{ steps.store.outputs.image_file }}
+
+      - name: Upload Docker image artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: docker-image
+          path: /tmp/${{ steps.store.outputs.image_file }}
+          retention-days: 1
+
+  deploy:
+    name: Deploy Docker Image
+    runs-on: ubuntu-latest
+    needs: build
+    steps:
+      - name: Download Docker image artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: docker-image
+          path: /tmp/
+
+      - name: Copy Docker image via SCP
+        uses: appleboy/scp-action@v0.1.7
+        with:
+          host: ${{ secrets.HOST }}
+          username: ${{ secrets.USER }}
+          password: ${{ secrets.PASSWORD }}
+          key: ${{ secrets.KEY }}
+          port: ${{ secrets.PORT }}
+          source: '/tmp/${{ needs.build.outputs.image_file }}'
+          target: '/tmp/shiroi'
+          strip_components: 1
+
+      - name: Deploy Docker container via SSH
+        uses: appleboy/ssh-action@master
+        with:
+          command_timeout: 10m
+          host: ${{ secrets.HOST }}
+          username: ${{ secrets.USER }}
+          password: ${{ secrets.PASSWORD }}
+          key: ${{ secrets.KEY }}
+          port: ${{ secrets.PORT }}
+          script: |
+            set -e
+
+            # 定义变量
+            IMAGE_FILE="${{ needs.build.outputs.image_file }}"
+            IMAGE_NAME="${{ env.IMAGE_NAME }}"
+            CONTAINER_NAME="shiroi-app"
+            SHA_SHORT="${{ needs.build.outputs.sha_short }}"
+
+            echo "Deploying Docker image: $IMAGE_FILE"
+
+            # 确保目录存在
+            mkdir -p /tmp/shiroi
+
+            # 加载 Docker 镜像
+            cd /tmp/shiroi
+            docker load -i $IMAGE_FILE
+
+            # 停止并删除旧容器（如果存在）
+            if docker ps -a --format "table {{.Names}}" | grep -q "^${CONTAINER_NAME}$"; then
+              echo "Stopping existing container: $CONTAINER_NAME"
+              docker stop $CONTAINER_NAME || true
+              docker rm $CONTAINER_NAME || true
+            fi
+
+            # 删除旧镜像（保留最新的两个版本）
+            echo "Cleaning up old images..."
+            docker images $IMAGE_NAME --format "table {{.Tag}}" | grep -v "TAG" | grep -v "latest" | grep -v "$SHA_SHORT" | head -n -1 | xargs -r -I {} docker rmi ${IMAGE_NAME}:{} || true
+
+            # 启动新容器
+            echo "Starting new container: $CONTAINER_NAME"
+            docker run -d \
+              --name $CONTAINER_NAME \
+              --restart unless-stopped \
+              -p 3000:3000 \
+              --env-file $HOME/shiroi/.env \
+              -v $HOME/shiroi/data:/app/data \
+              -v $HOME/shiroi/logs:/app/logs \
+              $IMAGE_NAME:$SHA_SHORT
+
+            # 清理临时文件
+            rm -f /tmp/shiroi/$IMAGE_FILE
+
+            # 验证容器状态
+            sleep 5
+            if docker ps --format "table {{.Names}}\t{{.Status}}" | grep -q "$CONTAINER_NAME.*Up"; then
+              echo "Container $CONTAINER_NAME is running successfully"
+              docker logs --tail 20 $CONTAINER_NAME
+            else
+              echo "Container $CONTAINER_NAME failed to start"
+              docker logs $CONTAINER_NAME
+              exit 1
+            fi
+
+            echo "Deployment completed successfully"
+
+      - name: After deploy script
+        run: |
+          hash=${{ needs.build.outputs.sha_short }}
+          # curl -X "POST" "https://mx.innei.in/api/v2/fn/shiro/new-version-hook" -H 'Content-Type: application/json' -d "{\"hash\": \"$hash\", \"key\": \"\"}"
+          ${{ secrets.AFTER_DEPLOY_SCRIPT }}
+
+  store:
+    name: Store artifact commit version
+    runs-on: ubuntu-latest
+    needs: [deploy, build]
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false # otherwise, the token used is the GITHUB_TOKEN, instead of your personal token
+          fetch-depth: 0 # otherwise, you will failed to push refs to dest repo
+
+      # Get the commit version from the build job
+      - name: Use outputs from build
+        env:
+          SHA_SHORT: ${{ needs.build.outputs.sha_short }}
+          BRANCH: ${{ needs.build.outputs.branch }}
+        run: |
+          echo "SHA Short from build: $SHA_SHORT"
+          echo "Branch from build: $BRANCH"
+
+      - name: Write hash to file
+        env:
+          SHA_SHORT: ${{ needs.build.outputs.sha_short }}
+        run: echo $SHA_SHORT > ${{ env.HASH_FILE }}
+
+      - name: Commit files
+        run: |
+          git config --local user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git config --local user.name "github-actions[bot]"
+          git add ${{ env.HASH_FILE }}
+          git commit -a -m "Update hash file"
+
+      - name: Push changes
+        uses: ad-m/github-push-action@master
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          branch: ${{ github.ref }}
