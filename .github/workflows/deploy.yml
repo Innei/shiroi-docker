@@ -130,14 +130,10 @@ jobs:
     steps:
       - name: Download Docker image artifact
         uses: actions/download-artifact@v4
-        with:
-          name: docker-image
-          path: /tmp/
 
       - name: List downloaded files
         run: |
-          echo "Files in /tmp/:"
-          ls -la /tmp/
+          ls -la
           echo "Looking for image file: ${{ needs.build.outputs.image_file }}"
 
       - name: Copy Docker image via SCP
@@ -148,8 +144,8 @@ jobs:
           password: ${{ secrets.PASSWORD }}
           key: ${{ secrets.KEY }}
           port: ${{ secrets.PORT }}
-          source: '/tmp/${{ needs.build.outputs.image_file }}'
-          target: '/tmp/shiroi/'
+          source: ${{ needs.build.outputs.image_file }}
+          target: '/tmp/shiroi'
           overwrite: true
           rm: false
 
