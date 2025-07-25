@@ -212,14 +212,17 @@ jobs:
 
             # 删除旧镜像（保留最新的两个版本）
             echo "Cleaning up old images..."
-            docker images $IMAGE_NAME --format "table {{.Tag}}" | grep -v "TAG" | grep -v "latest" | grep -v "$SHA_SHORT" | head -n -1 | xargs -r -I {} docker rmi ${IMAGE_NAME}:{} || true
+            docker images $IMAGE_NAME --format "table {{.Tag}}" | grep -v "TAG" | grep -v "latest" | grep -v "$SHA_SHORT" | grep -v "<none>" | head -n -1 | xargs -r -I {} docker rmi ${IMAGE_NAME}:{} || true
+
+            # 清理无标签的悬空镜像
+            docker image prune -f || true
 
             # 启动新容器
             echo "Starting new container: $CONTAINER_NAME"
             docker run -d \
               --name $CONTAINER_NAME \
               --restart unless-stopped \
-              -p 3000:13000 -p 2323:12323 \
+              -p 13000:3000 -p 12323:2323 \
               --env-file $HOME/shiroi/.env \
               -v $HOME/shiroi/data:/app/data \
               -v $HOME/shiroi/logs:/app/logs \

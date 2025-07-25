@@ -11,7 +11,7 @@ CONTAINER_NAME="shiroi-app"
 ENV_FILE="$HOME/shiroi/.env"
 DATA_VOLUME="$HOME/shiroi/data:/app/data"
 LOGS_VOLUME="$HOME/shiroi/logs:/app/logs"
-PORT_MAPPING="-p 3000:13000 -p 2323:12323"
+PORT_MAPPING="-p 13000:3000 -p 12323:2323"
 
 # Colors for output
 RED='\033[0;31m'
