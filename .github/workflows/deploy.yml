@@ -116,38 +116,65 @@ jobs:
           cache-to: type=gha,mode=max
           outputs: type=docker,dest=/tmp/${{ steps.store.outputs.image_file }}
 
-      - name: Upload Docker image artifact
-        uses: actions/upload-artifact@v4
+      - name: Cache Docker image
+        uses: actions/cache/save@v4
         with:
-          name: docker-image
-          path: /tmp/${{ steps.store.outputs.image_file }}
-          retention-days: 1
+          path: ${{ steps.store.outputs.image_file }}
+          key: docker-image-${{ github.run_number }}-${{ steps.store.outputs.sha_short }}
 
   deploy:
     name: Deploy Docker Image
     runs-on: ubuntu-latest
     needs: build
     steps:
-      - name: Download Docker image artifact
-        uses: actions/download-artifact@v4
+      - name: Restore Docker image from cache
+        uses: actions/cache/restore@v4
+        with:
+          path: ${{ needs.build.outputs.image_file }}
+          key: docker-image-${{ github.run_number }}-${{ needs.build.outputs.sha_short }}
+          fail-on-cache-miss: true
 
       - name: List downloaded files
         run: |
           ls -la
           echo "Looking for image file: ${{ needs.build.outputs.image_file }}"
 
-      - name: Copy Docker image via SCP
-        uses: appleboy/scp-action@v0.1.7
+      - name: Copy Docker image via rsync
+        uses: appleboy/ssh-action@master
         with:
           host: ${{ secrets.HOST }}
           username: ${{ secrets.USER }}
           password: ${{ secrets.PASSWORD }}
           key: ${{ secrets.KEY }}
           port: ${{ secrets.PORT }}
-          source: ${{ needs.build.outputs.image_file }}
-          target: '/tmp/shiroi'
-          overwrite: true
-          rm: false
+          script: |
+            # Ensure target directory exists
+            mkdir -p /tmp/shiroi
+
+      - name: Transfer Docker image
+        run: |
+          # Setup SSH key if provided
+          if [ -n "${{ secrets.KEY }}" ]; then
+            mkdir -p ~/.ssh
+            echo "${{ secrets.KEY }}" > ~/.ssh/id_rsa
+            chmod 600 ~/.ssh/id_rsa
+            ssh-keyscan -p ${{ secrets.PORT || 22 }} ${{ secrets.HOST }} >> ~/.ssh/known_hosts
+            TRANSFER_CMD="rsync -avz -e 'ssh -i ~/.ssh/id_rsa -p ${{ secrets.PORT || 22 }}' ${{ needs.build.outputs.image_file }} ${{ secrets.USER }}@${{ secrets.HOST }}:/tmp/shiroi/"
+          else
+            # Use sshpass for password authentication
+            sudo apt-get update && sudo apt-get install -y sshpass rsync
+            TRANSFER_CMD="sshpass -p '${{ secrets.PASSWORD }}' rsync -avz -e 'ssh -p ${{ secrets.PORT || 22 }} -o StrictHostKeyChecking=no' ${{ needs.build.outputs.image_file }} ${{ secrets.USER }}@${{ secrets.HOST }}:/tmp/shiroi/"
+          fi
+
+          echo "Transferring ${{ needs.build.outputs.image_file }} to remote server..."
+          eval $TRANSFER_CMD
+
+          if [ $? -eq 0 ]; then
+            echo "File transfer completed successfully"
+          else
+            echo "File transfer failed"
+            exit 1
+          fi
 
       - name: Deploy Docker container via SSH
         uses: appleboy/ssh-action@master
