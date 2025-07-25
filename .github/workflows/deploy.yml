@@ -219,7 +219,7 @@ jobs:
             docker run -d \
               --name $CONTAINER_NAME \
               --restart unless-stopped \
-              -p 3000:13000 2323:12323 \
+              -p 3000:13000 -p 2323:12323 \
               --env-file $HOME/shiroi/.env \
               -v $HOME/shiroi/data:/app/data \
               -v $HOME/shiroi/logs:/app/logs \
