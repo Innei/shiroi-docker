@@ -40,7 +40,31 @@ print_error() {
 # Function to list available image versions
 list_versions() {
     print_info "Available Docker image versions:"
-    docker images $IMAGE_NAME --format "table {{.Tag}}\t{{.CreatedAt}}\t{{.Size}}" | head -20
+    
+    # 分别统计不同类型的标签
+    local hash_tags=$(docker images $IMAGE_NAME --format "{{.Tag}}" | grep -E '^[a-f0-9]{7}$' | wc -l)
+    local date_tags=$(docker images $IMAGE_NAME --format "{{.Tag}}" | grep -E '^[0-9]{8}_[0-9]{4}$' | wc -l)
+    local total_versioned=$((hash_tags + date_tags))
+    
+    if [ "$total_versioned" -eq 0 ]; then
+        print_warning "No versioned images found for $IMAGE_NAME"
+        docker images $IMAGE_NAME --format "table {{.Tag}}\t{{.CreatedAt}}\t{{.Size}}"
+        return 1
+    fi
+    
+    echo "Git Hash Tags (commit-based):"
+    docker images $IMAGE_NAME --format "table {{.Tag}}\t{{.CreatedAt}}\t{{.Size}}" | grep -E "(TAG|^[a-f0-9]{7})" | head -15
+    
+    echo
+    echo "Date Tags (time-based):"
+    docker images $IMAGE_NAME --format "table {{.Tag}}\t{{.CreatedAt}}\t{{.Size}}" | grep -E "(TAG|^[0-9]{8}_[0-9]{4})" | head -15
+    
+    echo
+    echo "Latest Tag:"
+    docker images $IMAGE_NAME --format "table {{.Tag}}\t{{.CreatedAt}}\t{{.Size}}" | grep -E "(TAG|latest)"
+    
+    echo
+    print_info "Total versioned images: $total_versioned (Hash: $hash_tags, Date: $date_tags)"
     
     echo
     print_info "Current running container:"
@@ -132,8 +156,18 @@ rollback_to_previous() {
     
     print_info "Current version: $current_tag"
     
-    # Get available versions excluding current one
-    local previous_tag=$(docker images $IMAGE_NAME --format "{{.Tag}}" | grep -v "latest" | grep -v "$current_tag" | head -1)
+    # 优先查找 git hash 标签（更稳定的版本标识）
+    local previous_tag=$(docker images $IMAGE_NAME --format "{{.Tag}}" | grep -E '^[a-f0-9]{7}$' | grep -v "$current_tag" | head -1)
+    
+    # 如果没有找到 git hash 标签，则查找日期标签
+    if [ -z "$previous_tag" ]; then
+        previous_tag=$(docker images $IMAGE_NAME --format "{{.Tag}}" | grep -E '^[0-9]{8}_[0-9]{4}$' | grep -v "$current_tag" | head -1)
+    fi
+    
+    # 如果仍然没有找到，查找其他非系统标签
+    if [ -z "$previous_tag" ]; then
+        previous_tag=$(docker images $IMAGE_NAME --format "{{.Tag}}" | grep -v "latest" | grep -v "$current_tag" | grep -v "<none>" | head -1)
+    fi
     
     if [ -z "$previous_tag" ]; then
         print_error "No previous version available for rollback"

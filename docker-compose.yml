@@ -1,0 +1,76 @@
+version: '3.8'
+
+services:
+  nginx:
+    image: nginx:alpine
+    container_name: shiroi-nginx
+    ports:
+      - "12323:2323"
+    volumes:
+      - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+      - ./nginx/upstream.conf:/etc/nginx/conf.d/upstream.conf:ro
+    depends_on:
+      - shiroi-blue
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:2323/nginx-health"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
+
+  shiroi-blue:
+    image: ${SHIROI_IMAGE:-shiroi:latest}
+    container_name: shiroi-app-blue
+    environment:
+      - PORT=3001
+      - NODE_ENV=production
+    env_file:
+      - ${HOME}/shiroi/.env
+    volumes:
+      - ${HOME}/shiroi/data:/app/data
+      - ${HOME}/shiroi/logs:/app/logs
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3001/"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
+    deploy:
+      resources:
+        limits:
+          memory: 500m
+        reservations:
+          memory: 256m
+
+  shiroi-green:
+    image: ${SHIROI_IMAGE:-shiroi:latest}
+    container_name: shiroi-app-green
+    environment:
+      - PORT=3002
+      - NODE_ENV=production
+    env_file:
+      - ${HOME}/shiroi/.env
+    volumes:
+      - ${HOME}/shiroi/data:/app/data
+      - ${HOME}/shiroi/logs:/app/logs
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3002/"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
+    deploy:
+      resources:
+        limits:
+          memory: 500m
+        reservations:
+          memory: 256m
+    profiles:
+      - green
+
+networks:
+  default:
+    name: shiroi-network

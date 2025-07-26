@@ -19,6 +19,7 @@ env:
   HASH_FILE: build_hash
   IMAGE_NAME: shiroi
   IMAGE_TAG: latest
+  KEEP_IMAGE_VERSIONS: 3 # Number of image versions to keep for rollback
 
 jobs:
   prepare:
@@ -78,6 +79,7 @@ jobs:
     outputs:
       sha_short: ${{ steps.store.outputs.sha_short }}
       branch: ${{ steps.store.outputs.branch }}
+      date_tag: ${{ steps.store.outputs.date_tag }}
       image_file: ${{ steps.store.outputs.image_file }}
 
     steps:
@@ -97,10 +99,13 @@ jobs:
         run: |
           sha_short=$(git rev-parse --short HEAD)
           branch_name=$(git rev-parse --abbrev-ref HEAD)
+          date_tag=$(date -u +"%Y%m%d_%H%M")
           image_file="${{ env.IMAGE_NAME }}-${sha_short}.tar"
           echo "sha_short=$sha_short" >> "$GITHUB_OUTPUT"
           echo "branch=$branch_name" >> "$GITHUB_OUTPUT"
+          echo "date_tag=$date_tag" >> "$GITHUB_OUTPUT"
           echo "image_file=$image_file" >> "$GITHUB_OUTPUT"
+          echo "Generated tags: $sha_short, $date_tag"
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
@@ -111,7 +116,10 @@ jobs:
           context: .
           file: ./Dockerfile
           push: false
-          tags: ${{ env.IMAGE_NAME }}:${{ steps.store.outputs.sha_short }},${{ env.IMAGE_NAME }}:${{ env.IMAGE_TAG }}
+          tags: |
+            ${{ env.IMAGE_NAME }}:${{ env.IMAGE_TAG }}
+            ${{ env.IMAGE_NAME }}:${{ steps.store.outputs.sha_short }}
+            ${{ env.IMAGE_NAME }}:${{ steps.store.outputs.date_tag }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
           outputs: type=docker,dest=/tmp/${{ steps.store.outputs.image_file }}
@@ -139,7 +147,7 @@ jobs:
           ls -la /tmp
           echo "Looking for image file: /tmp/${{ needs.build.outputs.image_file }}"
 
-      - name: Copy Docker image via rsync
+      - name: Copy Docker image and compose files via rsync
         uses: appleboy/ssh-action@master
         with:
           host: ${{ secrets.HOST }}
@@ -149,18 +157,25 @@ jobs:
           script: |
             # Ensure target directory exists
             mkdir -p /tmp/shiroi
+            mkdir -p $HOME/shiroi/deploy
 
-      - name: Transfer Docker image
+      - name: Transfer Docker image and deployment files
         run: |
           # Setup SSH key
           mkdir -p ~/.ssh
           echo "${{ secrets.SSH_PRIVATE_KEY }}" > ~/.ssh/id_rsa
           chmod 600 ~/.ssh/id_rsa
           ssh-keyscan -p ${{ secrets.PORT || 22 }} ${{ secrets.HOST }} >> ~/.ssh/known_hosts
-          TRANSFER_CMD="rsync -avz -e 'ssh -i ~/.ssh/id_rsa -p ${{ secrets.PORT || 22 }}' /tmp/${{ needs.build.outputs.image_file }} ${{ secrets.USER }}@${{ secrets.HOST }}:/tmp/shiroi/"
 
-          echo "Transferring /tmp/${{ needs.build.outputs.image_file }} to remote server..."
+          # Transfer Docker image
+          TRANSFER_CMD="rsync -avz -e 'ssh -i ~/.ssh/id_rsa -p ${{ secrets.PORT || 22 }}' /tmp/${{ needs.build.outputs.image_file }} ${{ secrets.USER }}@${{ secrets.HOST }}:/tmp/shiroi/"
+          echo "Transferring Docker image..."
           eval $TRANSFER_CMD
+
+          # Transfer compose files
+          COMPOSE_CMD="rsync -avz -e 'ssh -i ~/.ssh/id_rsa -p ${{ secrets.PORT || 22 }}' docker-compose.yml nginx/ deploy-zero-downtime.sh ${{ secrets.USER }}@${{ secrets.HOST }}:$HOME/shiroi/deploy/"
+          echo "Transferring deployment files..."
+          eval $COMPOSE_CMD
 
           if [ $? -eq 0 ]; then
             echo "File transfer completed successfully"
@@ -169,10 +184,10 @@ jobs:
             exit 1
           fi
 
-      - name: Deploy Docker container via SSH
+      - name: Deploy Docker container with zero downtime
         uses: appleboy/ssh-action@master
         with:
-          command_timeout: 10m
+          command_timeout: 15m
           host: ${{ secrets.HOST }}
           username: ${{ secrets.USER }}
           key: ${{ secrets.SSH_PRIVATE_KEY }}
@@ -183,68 +198,116 @@ jobs:
             # 定义变量
             IMAGE_FILE="${{ needs.build.outputs.image_file }}"
             IMAGE_NAME="${{ env.IMAGE_NAME }}"
-            CONTAINER_NAME="shiroi-app"
             SHA_SHORT="${{ needs.build.outputs.sha_short }}"
+            DATE_TAG="${{ needs.build.outputs.date_tag }}"
+            NEW_IMAGE="$IMAGE_NAME:$SHA_SHORT"
 
-            echo "Deploying Docker image: $IMAGE_FILE"
+            echo "Starting zero-downtime deployment..."
+            echo "Image: $NEW_IMAGE"
+            echo "Available tags: latest, $SHA_SHORT, $DATE_TAG"
             echo "Current user: $(whoami)"
-            echo "Current directory: $(pwd)"
             echo "Docker version: $(docker --version)"
 
             # 确保目录存在
             mkdir -p /tmp/shiroi
+            cd $HOME/shiroi/deploy
 
-            # 加载 Docker 镜像
+            # 加载新的 Docker 镜像
             cd /tmp/shiroi
             if [ ! -f "$IMAGE_FILE" ]; then
               echo "Error: Docker image file $IMAGE_FILE not found"
               ls -la /tmp/shiroi/
               exit 1
             fi
+
+            echo "Loading Docker image..."
             docker load -i $IMAGE_FILE
 
-            # 停止并删除旧容器（如果存在）
-            if docker ps -a --format "table {{.Names}}" | grep -q "^${CONTAINER_NAME}$"; then
-              echo "Stopping existing container: $CONTAINER_NAME"
-              docker stop $CONTAINER_NAME || true
-              docker rm $CONTAINER_NAME || true
+            # 验证镜像标签
+            echo "Verifying loaded image tags..."
+            docker images $IMAGE_NAME --format "table {{.Tag}}\t{{.CreatedAt}}" | grep -E "(latest|$SHA_SHORT|$DATE_TAG)"
+
+            # 切换到部署目录
+            cd $HOME/shiroi/deploy
+
+            # 检查是否是首次部署
+            if ! docker compose ps nginx | grep -q "Up"; then
+              echo "First time deployment - starting all services..."
+              export SHIROI_IMAGE=$NEW_IMAGE
+              docker compose up -d
+              
+              # 等待服务启动
+              sleep 30
+              
+              # 验证服务状态
+              if docker compose ps | grep -q "unhealthy"; then
+                echo "Some services are unhealthy!"
+                docker compose ps
+                docker compose logs
+                exit 1
+              fi
+              
+              echo "Initial deployment completed successfully"
+            else
+              echo "Performing zero-downtime deployment..."
+              ./deploy-zero-downtime.sh deploy $NEW_IMAGE
             fi
-
-            # 删除旧镜像（保留最新的两个版本）
-            echo "Cleaning up old images..."
-            docker images $IMAGE_NAME --format "table {{.Tag}}" | grep -v "TAG" | grep -v "latest" | grep -v "$SHA_SHORT" | grep -v "<none>" | head -n -1 | xargs -r -I {} docker rmi ${IMAGE_NAME}:{} || true
-
-            # 清理无标签的悬空镜像
-            docker image prune -f || true
-
-            # 启动新容器
-            echo "Starting new container: $CONTAINER_NAME"
-            docker run -d \
-              --name $CONTAINER_NAME \
-              --restart unless-stopped \
-              --memory 500m \
-              --oom-kill-disable=false \
-              -p 13000:3000 -p 12323:2323 \
-              --env-file $HOME/shiroi/.env \
-              -v $HOME/shiroi/data:/app/data \
-              -v $HOME/shiroi/logs:/app/logs \
-              $IMAGE_NAME:$SHA_SHORT
 
             # 清理临时文件
             rm -f /tmp/shiroi/$IMAGE_FILE
 
-            # 验证容器状态
-            sleep 5
-            if docker ps --format "table {{.Names}}\t{{.Status}}" | grep -q "$CONTAINER_NAME.*Up"; then
-              echo "Container $CONTAINER_NAME is running successfully"
-              docker logs --tail 20 $CONTAINER_NAME
+            # 清理旧镜像（保留指定数量的版本用于回滚）
+            # 这确保了 rollback.sh 和 deploy-zero-downtime.sh 可以访问足够的历史版本
+            KEEP_VERSIONS=${{ env.KEEP_IMAGE_VERSIONS }}
+            echo "Cleaning up old images (keeping latest $KEEP_VERSIONS versions for rollback)..."
+            echo "Current tags preserved: latest, $SHA_SHORT, $DATE_TAG"
+
+            # 获取所有标签，排除系统标签和当前构建的标签
+            ALL_TAGS=$(docker images $IMAGE_NAME --format "{{.Tag}}" | grep -v "TAG" | grep -v "latest" | grep -v "$SHA_SHORT" | grep -v "$DATE_TAG" | grep -v "<none>")
+
+            # 按时间排序，获取需要删除的旧版本（保留最新的 KEEP_VERSIONS 个版本）
+            if [ ! -z "$ALL_TAGS" ]; then
+              # 使用 git commit hash 格式的标签进行版本管理（7 个字符的 hash）
+              HASH_TAGS=$(echo "$ALL_TAGS" | grep -E '^[a-f0-9]{7}$' | sort -r)
+              DATE_TAGS=$(echo "$ALL_TAGS" | grep -E '^[0-9]{8}_[0-9]{4}$' | sort -r)
+              
+              # 清理旧的 hash 标签
+              OLD_HASH_TAGS=$(echo "$HASH_TAGS" | tail -n +$((KEEP_VERSIONS + 1)))
+              # 清理旧的日期标签  
+              OLD_DATE_TAGS=$(echo "$DATE_TAGS" | tail -n +$((KEEP_VERSIONS + 1)))
+              
+              OLD_TAGS="$OLD_HASH_TAGS $OLD_DATE_TAGS"
+              OLD_TAGS=$(echo "$OLD_TAGS" | tr ' ' '\n' | grep -v '^$' | sort -u)
+              
+              if [ ! -z "$OLD_TAGS" ]; then
+                echo "Removing old image tags: $OLD_TAGS"
+                echo "$OLD_TAGS" | xargs -r -I {} docker rmi ${IMAGE_NAME}:{} || true
+                echo "Image cleanup completed"
+              else
+                echo "No old images to clean up (keeping latest $KEEP_VERSIONS versions for rollback)"
+              fi
             else
-              echo "Container $CONTAINER_NAME failed to start"
-              docker logs $CONTAINER_NAME
-              exit 1
+              echo "No tagged images found to clean up"
             fi
 
-            echo "Deployment completed successfully"
+            # 显示保留的镜像版本
+            echo "Retained image versions for rollback:"
+            docker images $IMAGE_NAME --format "table {{.Tag}}\t{{.CreatedAt}}" | grep -E "(latest|^[a-f0-9]{7}$|^[0-9]{8}_[0-9]{4}$)" | head -$((KEEP_VERSIONS * 2 + 1))
+
+
+            # 最终状态检查
+            echo "Deployment status:"
+            docker compose ps
+
+            echo "Testing service availability..."
+            sleep 5
+            if curl -f http://localhost:12323/nginx-health > /dev/null 2>&1; then
+              echo "Service is available on port 12323"
+            else
+              echo "Warning: Service health check on port 12323 failed"
+            fi
+
+            echo "Zero-downtime deployment completed successfully"
 
       - name: After deploy script
         run: |

@@ -54,7 +54,7 @@ mkdir -p $HOME/shiroi/{data,logs}
 touch $HOME/shiroi/.env
 ```
 
-编辑 `$HOME/shiroi/.env` 文件，添加 Shiroi 所需的环境变量（参考 `env.example` 文件）：
+编辑 `$HOME/shiroi/.env` 文件，添加 Shiroi 所需的环境变量（参考 `shiroi.env.example` 文件）：
 
 ## Secrets
 
@@ -93,41 +93,80 @@ touch $HOME/shiroi/.env
    - 清理旧镜像和临时文件
 5. **存储阶段**：更新构建哈希文件
 
-## 容器配置
+## 零停机部署方案
 
-部署的 Docker 容器会使用以下配置：
+本项目现在支持基于 Docker Compose 和 Nginx 反向代理的零停机蓝绿部署方案。
 
-- **端口映射**：`3000:3000`
-- **环境变量**：从 `$HOME/shiroi/.env` 文件加载
+### 架构设计
+
+```
+外部访问 :12323 → Nginx → 蓝绿 NextJS 容器
+                         ├─ shiroi-blue:3001
+                         └─ shiroi-green:3002
+```
+
+### 服务配置
+
+- **外部端口**：
+  - `12323:2323` - 应用端口
+- **内部容器**：
+  - `shiroi-blue`: 端口 3001
+  - `shiroi-green`: 端口 3002
 - **数据持久化**：
   - `$HOME/shiroi/data:/app/data` - 应用数据
   - `$HOME/shiroi/logs:/app/logs` - 日志文件
-- **重启策略**：`unless-stopped`
+- **部署文件**：存储在 `$HOME/shiroi/deploy/`
+
+### 零停机部署流程
+
+1. **首次部署**：自动启动所有服务
+2. **后续升级**：
+   - 启动新版本容器（蓝/绿切换）
+   - 健康检查新容器
+   - 更新 Nginx 配置切换流量
+   - 停止旧容器
+3. **回滚支持**：快速切换回上一版本
 
 ## 手动管理
 
-### 查看容器状态
+### 零停机部署操作
 
 ```bash
-docker ps -a | grep shiroi-app
+# 切换到部署目录
+cd $HOME/shiroi/deploy
+
+# 部署新版本
+./deploy-zero-downtime.sh deploy shiroi:new-tag
+
+# 查看当前状态
+./deploy-zero-downtime.sh status
+
+# 回滚到上一版本
+./deploy-zero-downtime.sh rollback
+
+# 停止所有服务
+./deploy-zero-downtime.sh stop
+
+# 启动所有服务
+./deploy-zero-downtime.sh start
 ```
 
-### 查看容器日志
+### 传统容器管理
 
 ```bash
-docker logs shiroi-app
-docker logs -f shiroi-app  # 实时查看
-```
+# 查看所有容器状态
+docker compose ps
 
-### 手动重启容器
+# 查看容器日志
+docker compose logs shiroi-blue
+docker compose logs shiroi-green
+docker compose logs nginx
 
-```bash
-docker restart shiroi-app
-```
+# 手动重启服务
+docker compose restart nginx
+docker compose restart shiroi-blue
 
-### 清理旧镜像
-
-```bash
+# 清理旧镜像
 docker images shiroi
 docker rmi shiroi:old-tag  # 删除指定标签的镜像
 ```
