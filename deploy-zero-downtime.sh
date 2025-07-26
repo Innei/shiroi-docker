@@ -78,41 +78,21 @@ get_current_color() {
 switch_upstream() {
     local target_color=$1
     local backup_file="${UPSTREAM_CONF}.backup.$(date +%s)"
+    local source_file="nginx/upstream-${target_color}.conf"
     
     print_info "Switching nginx upstream to $target_color..."
+    
+    # Check if source file exists
+    if [ ! -f "$source_file" ]; then
+        print_error "Source config file $source_file not found"
+        return 1
+    fi
     
     # Backup current config
     cp $UPSTREAM_CONF $backup_file
     
-    if [ "$target_color" = "green" ]; then
-        cat > $UPSTREAM_CONF << 'EOF'
-# Upstream configuration for blue-green deployment
-# Currently serving: GREEN
-
-upstream shiroi_backend {
-    server shiroi-app-green:3002 max_fails=3 fail_timeout=30s;
-    
-    # Blue container (backup)
-    # server shiroi-app-blue:3001 max_fails=3 fail_timeout=30s;
-    
-    keepalive 32;
-}
-EOF
-    else
-        cat > $UPSTREAM_CONF << 'EOF'
-# Upstream configuration for blue-green deployment
-# Currently serving: BLUE
-
-upstream shiroi_backend {
-    server shiroi-app-blue:3001 max_fails=3 fail_timeout=30s;
-    
-    # Green container (backup)
-    # server shiroi-app-green:3002 max_fails=3 fail_timeout=30s;
-    
-    keepalive 32;
-}
-EOF
-    fi
+    # Copy the appropriate upstream config
+    cp $source_file $UPSTREAM_CONF
     
     # Reload nginx configuration
     print_info "Reloading nginx configuration..."

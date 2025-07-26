@@ -172,8 +172,8 @@ jobs:
           echo "Transferring Docker image..."
           eval $TRANSFER_CMD
 
-          # Transfer compose files
-          COMPOSE_CMD="rsync -avz -e 'ssh -i ~/.ssh/id_rsa -p ${{ secrets.PORT || 22 }}' docker-compose.yml nginx/ deploy-zero-downtime.sh ${{ secrets.USER }}@${{ secrets.HOST }}:$HOME/shiroi/deploy/"
+          # Transfer compose files and configs
+          COMPOSE_CMD="rsync -avz -e 'ssh -i ~/.ssh/id_rsa -p ${{ secrets.PORT || 22 }}' docker-compose.yml nginx/ deploy-zero-downtime.sh sync-configs.sh shiroi.env.example compose.env.example ${{ secrets.USER }}@${{ secrets.HOST }}:$HOME/shiroi/deploy/"
           echo "Transferring deployment files..."
           eval $COMPOSE_CMD
 
@@ -229,6 +229,10 @@ jobs:
 
             # 切换到部署目录
             cd $HOME/shiroi/deploy
+
+            # 同步配置文件
+            echo "Synchronizing configuration files..."
+            ./sync-configs.sh
 
             # 检查是否是首次部署
             if ! docker compose ps nginx | grep -q "Up"; then
