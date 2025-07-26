@@ -222,6 +222,8 @@ jobs:
             docker run -d \
               --name $CONTAINER_NAME \
               --restart unless-stopped \
+              --memory 500m \
+              --oom-kill-disable=false \
               -p 13000:3000 -p 12323:2323 \
               --env-file $HOME/shiroi/.env \
               -v $HOME/shiroi/data:/app/data \
