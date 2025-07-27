@@ -29,7 +29,7 @@ services:
       - ${HOME}/shiroi/logs:/app/logs
     restart: unless-stopped
     healthcheck:
-      test: ['CMD', 'curl', '-f', 'http://localhost:2323/']
+      test: ['CMD', 'curl', '-f', 'http://localhost:2323/health-check']
       interval: 10s
       timeout: 5s
       retries: 3
@@ -53,7 +53,7 @@ services:
       - ${HOME}/shiroi/logs:/app/logs
     restart: unless-stopped
     healthcheck:
-      test: ['CMD', 'curl', '-f', 'http://localhost:2323/']
+      test: ['CMD', 'curl', '-f', 'http://localhost:2323/health-check']
       interval: 10s
       timeout: 5s
       retries: 3
