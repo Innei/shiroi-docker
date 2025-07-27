@@ -135,6 +135,9 @@ jobs:
     runs-on: ubuntu-latest
     needs: build
     steps:
+      - name: Checkout deployment repository
+        uses: actions/checkout@v4
+
       - name: Restore Docker image from cache
         uses: actions/cache/restore@v4
         with:
