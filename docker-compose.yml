@@ -5,7 +5,7 @@ services:
     image: nginx:alpine
     container_name: shiroi-nginx
     ports:
-      - "12323:2323"
+      - '12333:2323'
     volumes:
       - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
       - ./nginx/upstream.conf:/etc/nginx/conf.d/upstream.conf:ro
@@ -13,7 +13,7 @@ services:
       - shiroi-blue
     restart: unless-stopped
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:2323/nginx-health"]
+      test: ['CMD', 'curl', '-f', 'http://localhost:2323/nginx-health']
       interval: 10s
       timeout: 5s
       retries: 3
@@ -32,7 +32,7 @@ services:
       - ${HOME}/shiroi/logs:/app/logs
     restart: unless-stopped
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:3001/"]
+      test: ['CMD', 'curl', '-f', 'http://localhost:3001/']
       interval: 10s
       timeout: 5s
       retries: 3
@@ -57,7 +57,7 @@ services:
       - ${HOME}/shiroi/logs:/app/logs
     restart: unless-stopped
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:3002/"]
+      test: ['CMD', 'curl', '-f', 'http://localhost:3002/']
       interval: 10s
       timeout: 5s
       retries: 3

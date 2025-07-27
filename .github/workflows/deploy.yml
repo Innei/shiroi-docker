@@ -305,10 +305,10 @@ jobs:
 
             echo "Testing service availability..."
             sleep 5
-            if curl -f http://localhost:12323/nginx-health > /dev/null 2>&1; then
-              echo "Service is available on port 12323"
+            if curl -f http://localhost:12333/nginx-health > /dev/null 2>&1; then
+              echo "Service is available on port 12333"
             else
-              echo "Warning: Service health check on port 12323 failed"
+              echo "Warning: Service health check on port 12333 failed"
             fi
 
             echo "Zero-downtime deployment completed successfully"

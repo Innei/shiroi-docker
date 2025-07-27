@@ -7,13 +7,13 @@ This project implements a zero-downtime blue-green deployment solution for Shiro
 ## Core Architecture
 
 ```
-External Access :12323 → Nginx → Blue-Green NextJS Containers
+External Access :12333 → Nginx → Blue-Green NextJS Containers
                                ├─ shiroi-blue:3001  
                                └─ shiroi-green:3002
 ```
 
 **Key Design Principles:**
-- External port remains constant (only 12323:2323)
+- External port remains constant (only 12333:2323)
 - Zero-downtime achieved through internal blue-green container switching
 - Nginx serves as reverse proxy and traffic switcher
 
@@ -22,7 +22,7 @@ External Access :12323 → Nginx → Blue-Green NextJS Containers
 ### 1. Docker Compose Configuration (`docker-compose.yml`)
 
 **Service Structure:**
-- `nginx`: Nginx reverse proxy, listening on 12323:2323
+- `nginx`: Nginx reverse proxy, listening on 12333:2323
 - `shiroi-blue`: Blue application container, internal port 3001
 - `shiroi-green`: Green application container, internal port 3002, uses profile by default
 
@@ -126,7 +126,7 @@ CONFIG_FILES=(
 ## Key Technical Decisions
 
 ### 1. Port Design
-**Remove port 13000, keep only 12323:**
+**Remove port 13000, keep only 12333:**
 - Simplify configuration, reduce maintenance cost
 - Unified external service port
 - Internal blue-green switching still uses 3001/3002 ports
@@ -221,8 +221,8 @@ cd $HOME/shiroi/deploy
 3. End-to-end service availability testing (user layer)
 
 **Verification Endpoints:**
-- `http://localhost:12323/` - Application homepage
-- `http://localhost:12323/nginx-health` - Nginx health status
+- `http://localhost:12333/` - Application homepage
+- `http://localhost:12333/nginx-health` - Nginx health status
 
 ## Performance Optimization
 

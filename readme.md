@@ -100,7 +100,7 @@ touch $HOME/shiroi/.env
 ### 架构设计
 
 ```
-外部访问 :12323 → Nginx → 蓝绿 NextJS 容器
+外部访问 :12333 → Nginx → 蓝绿 NextJS 容器
                          ├─ shiroi-blue:3001
                          └─ shiroi-green:3002
 ```
@@ -108,7 +108,7 @@ touch $HOME/shiroi/.env
 ### 服务配置
 
 - **外部端口**：
-  - `12323:2323` - 应用端口
+  - `12333:2323` - 应用端口
 - **内部容器**：
   - `shiroi-blue`: 端口 3001
   - `shiroi-green`: 端口 3002
