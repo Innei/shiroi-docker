@@ -176,7 +176,7 @@ jobs:
           eval $TRANSFER_CMD
 
           # Transfer compose files and configs
-          COMPOSE_CMD="rsync -avz -e 'ssh -i ~/.ssh/id_rsa -p ${{ secrets.PORT || 22 }}' docker-compose.yml nginx/ deploy-zero-downtime.sh sync-configs.sh shiroi.env.example compose.env.example ${{ secrets.USER }}@${{ secrets.HOST }}:$HOME/shiroi/deploy/"
+          COMPOSE_CMD="rsync -avz -e 'ssh -i ~/.ssh/id_rsa -p ${{ secrets.PORT || 22 }}' docker-compose.yml nginx/ deploy-zero-downtime.sh sync-configs.sh shiroi.env.example compose.env.example ${{ secrets.USER }}@${{ secrets.HOST }}:/home/${{ secrets.USER }}/shiroi/deploy/"
           echo "Transferring deployment files..."
           eval $COMPOSE_CMD
 
