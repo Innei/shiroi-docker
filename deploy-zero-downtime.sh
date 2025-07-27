@@ -36,12 +36,21 @@ check_container_health() {
     print_info "Checking health of $container_name..."
     
     for ((i=0; i<timeout; i+=interval)); do
-        if docker compose ps $container_name | grep -q "healthy"; then
+        # Check if container exists and is running
+        if ! docker ps --filter "name=$container_name" --format "{{.Status}}" | grep -q "Up"; then
+            print_error "Container $container_name is not running"
+            return 1
+        fi
+        
+        # Check container health status
+        local health_status=$(docker inspect $container_name --format='{{.State.Health.Status}}' 2>/dev/null || echo "unknown")
+        
+        if [ "$health_status" = "healthy" ]; then
             print_success "$container_name is healthy"
             return 0
         fi
         
-        if docker compose ps $container_name | grep -q "unhealthy"; then
+        if [ "$health_status" = "unhealthy" ]; then
             print_error "$container_name is unhealthy"
             return 1
         fi
@@ -56,10 +65,13 @@ check_container_health() {
 
 # Function to get current active color
 get_current_color() {
-    if docker compose ps $BLUE_CONTAINER | grep -q "Up"; then
-        if docker compose ps $GREEN_CONTAINER | grep -q "Up"; then
+    local blue_running=$(docker ps --filter "name=$BLUE_CONTAINER" --format "{{.Status}}" | grep -c "Up" || echo "0")
+    local green_running=$(docker ps --filter "name=$GREEN_CONTAINER" --format "{{.Status}}" | grep -c "Up" || echo "0")
+    
+    if [ "$blue_running" = "1" ]; then
+        if [ "$green_running" = "1" ]; then
             # Both running, check nginx upstream config
-            if grep -q "shiroi-app-green:3002" $UPSTREAM_CONF && ! grep -q "# server shiroi-app-green:3002" $UPSTREAM_CONF; then
+            if grep -q "shiroi-app-green:2323" $UPSTREAM_CONF && ! grep -q "# server shiroi-app-green:2323" $UPSTREAM_CONF; then
                 echo "green"
             else
                 echo "blue"
@@ -67,7 +79,7 @@ get_current_color() {
         else
             echo "blue"
         fi
-    elif docker compose ps $GREEN_CONTAINER | grep -q "Up"; then
+    elif [ "$green_running" = "1" ]; then
         echo "green"
     else
         echo "none"
@@ -157,9 +169,9 @@ deploy() {
     # Start target container
     print_info "Starting $target_color container..."
     if [ "$target_color" = "green" ]; then
-        docker compose --profile green up -d shiroi-green
+        docker compose --profile green up -d shiroi-app-green
     else
-        docker compose up -d shiroi-blue
+        docker compose up -d shiroi-app-blue
     fi
     
     # Wait for container to be healthy
@@ -188,7 +200,7 @@ deploy() {
     
     # Verify nginx is serving correctly
     print_info "Verifying nginx is serving correctly..."
-    if ! curl -f http://localhost:2323/nginx-health > /dev/null 2>&1; then
+    if ! curl -f http://localhost:12333/nginx-health > /dev/null 2>&1; then
         print_error "Nginx health check failed, rolling back..."
         switch_upstream $current_color
         docker compose stop $target_container
@@ -212,7 +224,7 @@ deploy() {
     print_info "Active color is now: $target_color"
     
     # Show status
-    docker compose ps
+    docker ps --filter "name=shiroi-"
 }
 
 # Function to rollback
@@ -237,10 +249,10 @@ rollback() {
     local target_container
     if [ "$target_color" = "green" ]; then
         target_container=$GREEN_CONTAINER
-        docker compose --profile green up -d shiroi-green
+        docker compose --profile green up -d shiroi-app-green
     else
         target_container=$BLUE_CONTAINER
-        docker compose up -d shiroi-blue
+        docker compose up -d shiroi-app-blue
     fi
     
     # Check health and switch
@@ -259,7 +271,7 @@ status() {
     local current_color=$(get_current_color)
     print_info "Current active color: $current_color"
     print_info "Container status:"
-    docker compose ps
+    docker ps --filter "name=shiroi-"
     
     print_info "Nginx upstream configuration:"
     grep -A 10 "upstream shiroi_backend" $UPSTREAM_CONF

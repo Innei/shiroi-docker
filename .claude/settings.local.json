@@ -4,7 +4,8 @@
       "Bash(mkdir:*)",
       "Bash(chmod:*)",
       "Bash(mv:*)",
-      "Bash(ls:*)"
+      "Bash(ls:*)",
+      "Bash(./deploy-zero-downtime.sh:*)"
     ],
     "deny": []
   }
