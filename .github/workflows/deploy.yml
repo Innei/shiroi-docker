@@ -161,6 +161,17 @@ jobs:
             # Ensure target directory exists
             mkdir -p /tmp/shiroi
             mkdir -p $HOME/shiroi/deploy
+            
+            # Clean up any incorrectly created directories from previous failed deployments
+            mkdir -p $HOME/shiroi/deploy/nginx
+            if [ -d "$HOME/shiroi/deploy/nginx/nginx.conf" ]; then
+              echo "Removing incorrectly created nginx.conf directory..."
+              rm -rf "$HOME/shiroi/deploy/nginx/nginx.conf"
+            fi
+            if [ -d "$HOME/shiroi/deploy/nginx/upstream.conf" ]; then
+              echo "Removing incorrectly created upstream.conf directory..."
+              rm -rf "$HOME/shiroi/deploy/nginx/upstream.conf"
+            fi
 
       - name: Transfer Docker image and deployment files
         run: |
@@ -176,9 +187,11 @@ jobs:
           eval $TRANSFER_CMD
 
           # Transfer compose files and configs
-          COMPOSE_CMD="rsync -avz -e 'ssh -i ~/.ssh/id_rsa -p ${{ secrets.PORT || 22 }}' docker-compose.yml nginx/ deploy-zero-downtime.sh sync-configs.sh shiroi.env.example compose.env.example ${{ secrets.USER }}@${{ secrets.HOST }}:/home/${{ secrets.USER }}/shiroi/deploy/"
-          echo "Transferring deployment files..."
-          eval $COMPOSE_CMD
+          echo "Transferring compose files..."
+          rsync -avz -e 'ssh -i ~/.ssh/id_rsa -p ${{ secrets.PORT || 22 }}' docker-compose.yml deploy-zero-downtime.sh sync-configs.sh shiroi.env.example compose.env.example ${{ secrets.USER }}@${{ secrets.HOST }}:/home/${{ secrets.USER }}/shiroi/deploy/
+          
+          echo "Transferring nginx directory..."
+          rsync -avz -e 'ssh -i ~/.ssh/id_rsa -p ${{ secrets.PORT || 22 }}' nginx/ ${{ secrets.USER }}@${{ secrets.HOST }}:/home/${{ secrets.USER }}/shiroi/deploy/nginx/
 
           if [ $? -eq 0 ]; then
             echo "File transfer completed successfully"

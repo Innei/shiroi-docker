@@ -5,8 +5,8 @@ services:
     ports:
       - '12333:2323'
     volumes:
-      - $HOME/shiroi/deploy/shiroi/nginx/nginx.conf:/etc/nginx/nginx.conf:ro
-      - $HOME/shiroi/deploy/shiroi/nginx/upstream.conf:/etc/nginx/conf.d/upstream.conf:ro
+      - $HOME/shiroi/deploy/nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+      - $HOME/shiroi/deploy/nginx/upstream.conf:/etc/nginx/conf.d/upstream.conf:ro
     depends_on:
       - shiroi-blue
     restart: unless-stopped
