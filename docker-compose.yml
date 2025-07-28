@@ -1,5 +1,5 @@
 services:
-  nginx:
+  shiroi-nginx:
     image: nginx:alpine
     container_name: shiroi-nginx
     ports:
