@@ -25,6 +25,7 @@ CONFIG_FILES=(
     "nginx/upstream-blue.conf"
     "nginx/upstream-green.conf"
     "deploy-zero-downtime.sh"
+    "first-time-deploy.sh"
     "shiroi.env.example"
     "compose.env.example"
 )
@@ -84,13 +85,19 @@ sync_configs() {
     done
 }
 
-# Function to ensure deployment script is executable
+# Function to ensure deployment scripts are executable
 make_executable() {
-    local script_file="$HOME/shiroi/deploy/deploy-zero-downtime.sh"
-    if [ -f "$script_file" ]; then
-        chmod +x "$script_file"
-        print_success "Made deploy script executable"
-    fi
+    local scripts=(
+        "$HOME/shiroi/deploy/deploy-zero-downtime.sh"
+        "$HOME/shiroi/deploy/first-time-deploy.sh"
+    )
+    
+    for script_file in "${scripts[@]}"; do
+        if [ -f "$script_file" ]; then
+            chmod +x "$script_file"
+            print_success "Made $(basename "$script_file") executable"
+        fi
+    done
 }
 
 # Function to initialize default upstream config if needed

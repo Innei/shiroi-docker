@@ -54,19 +54,40 @@ External Access :12333 → Nginx → Blue-Green NextJS Containers
 - `start/stop`: Service management
 
 **Blue-Green Switch Logic:**
-1. Detect current active color
+1. Detect current active color using `docker ps` commands
 2. Start target color container
-3. Health check new container
+3. Health check new container using `docker ps` and `docker inspect`
 4. Switch Nginx configuration (`switch_upstream` function)
 5. Verify traffic switch success
 6. Stop old container
 
 **Key Functions:**
-- `get_current_color()`: Detect current active color
+- `get_current_color()`: Detect current active color using `docker ps`
 - `switch_upstream()`: Switch Nginx config via file copying
-- `check_container_health()`: Container health checking
+- `check_container_health()`: Container health checking using `docker ps` and `docker inspect`
 
-### 4. Configuration Sync System (`sync-configs.sh`)
+### 4. First-Time Deployment Script (`first-time-deploy.sh`)
+
+**Core Responsibilities:**
+- Handle initial deployment when no services are running
+- Use `docker ps` to detect if deployment is truly first-time
+- Start all services using docker-compose
+- Perform comprehensive health checks using `docker ps` and `docker inspect`
+- Verify service availability via HTTP endpoints
+
+**Key Features:**
+- **Container Detection**: Uses `docker ps` with filters instead of `docker compose ps`
+- **Health Checking**: Combines container status from `docker ps` with health status from `docker inspect`
+- **Service Validation**: Tests both container health and HTTP endpoint availability
+- **Error Handling**: Provides detailed logging and cleanup on failure
+
+**Detection Logic:**
+- Check for nginx container: `docker ps --filter "name=shiroi-nginx"`
+- Check for shiroi app containers: `docker ps --filter "name=shiroi-app"`
+- Container names match docker-compose.yml: `shiroi-nginx`, `shiroi-app-blue`, `shiroi-app-green`
+- Clean up orphaned containers if needed
+
+### 5. Configuration Sync System (`sync-configs.sh`)
 
 **Core Responsibilities:**
 - Ensure remote server directory structure integrity
@@ -83,12 +104,13 @@ CONFIG_FILES=(
     "nginx/upstream-blue.conf"
     "nginx/upstream-green.conf"
     "deploy-zero-downtime.sh"
+    "first-time-deploy.sh"
     "shiroi.env.example"
     "compose.env.example"
 )
 ```
 
-### 5. GitHub Actions Workflow (`.github/workflows/deploy.yml`)
+### 6. GitHub Actions Workflow (`.github/workflows/deploy.yml`)
 
 **Enhanced Features:**
 - Build multi-tag images: `latest`, `{git-hash}`, `{date_time}`
@@ -100,11 +122,12 @@ CONFIG_FILES=(
 1. **Prepare Phase**: Read build hash, determine if rebuild needed
 2. **Build Phase**: Docker build, generate multi-tag images
 3. **Deploy Phase**: 
-   - Upload images and configuration files
+   - Upload images and configuration files (including `first-time-deploy.sh`)
    - Run configuration sync script
-   - Execute zero-downtime deployment or first deployment
+   - Detect deployment type using `docker ps` instead of `docker compose ps`
+   - Execute either `first-time-deploy.sh` or `deploy-zero-downtime.sh deploy`
    - Clean old image versions
-4. **Verification Phase**: Health checks, update hash records
+4. **Verification Phase**: Health checks using `docker ps`, update hash records
 
 ## Environment Variable File System
 
@@ -132,10 +155,12 @@ CONFIG_FILES=(
 - Internal blue-green switching still uses 3001/3002 ports
 
 ### 2. Health Check Strategy
-**Use NextJS root path `/`:**
-- Closer to real user access patterns
-- Judge service health by HTTP status codes (200 vs 5xx)
-- No need for special health check endpoints
+**Multi-layer Health Checking:**
+- **Container Level**: Use `docker ps` to check running status
+- **Health Check Level**: Use `docker inspect` to check configured health status
+- **Service Level**: Use NextJS root path `/` for HTTP availability
+- Judge service health by both container status and HTTP status codes (200 vs 5xx)
+- No dependency on `docker compose ps` for status checking
 
 ### 3. Configuration Management Strategy
 **Separate static configuration files:**
@@ -160,7 +185,8 @@ $HOME/shiroi/
 └── deploy/                 # Deployment files directory
     ├── .env                # Docker Compose environment variables
     ├── docker-compose.yml  # Main orchestration file
-    ├── deploy-zero-downtime.sh  # Deployment script
+    ├── deploy-zero-downtime.sh  # Zero-downtime deployment script
+    ├── first-time-deploy.sh # First-time deployment script
     ├── sync-configs.sh     # Configuration sync script
     ├── shiroi.env.example  # Application config example
     ├── compose.env.example # Orchestration config example
@@ -176,7 +202,8 @@ $HOME/shiroi/
 ### First Deployment
 1. Fork project, configure GitHub Secrets
 2. Push code to trigger automatic build and deployment
-3. System auto-detects first deployment, starts all services
+3. System auto-detects first deployment using `docker ps` container checks
+4. Executes `first-time-deploy.sh` to start all services with comprehensive health validation
 
 ### Daily Upgrades
 1. Push code to main branch
@@ -188,7 +215,10 @@ $HOME/shiroi/
 ```bash
 cd $HOME/shiroi/deploy
 
-# Zero-downtime deployment
+# First-time deployment (if no services running)
+./first-time-deploy.sh shiroi:new-tag
+
+# Zero-downtime deployment (for existing services)
 ./deploy-zero-downtime.sh deploy shiroi:new-tag
 
 # View status
@@ -277,11 +307,13 @@ cd $HOME/shiroi/deploy
 
 **2025-01-XX Major Updates:**
 - Implemented complete zero-downtime blue-green deployment solution
+- **Extracted first-time deployment logic to separate `first-time-deploy.sh` script**
+- **Replaced all `docker compose ps` with `docker ps` commands** for container status checking
+- Enhanced health check mechanisms using `docker ps` and `docker inspect`
 - Optimized configuration file management, separated static configurations
 - Enhanced rollback system with intelligent version selection
 - Simplified port configuration, removed port 13000
-- Improved health check mechanisms
-- Established configuration synchronization system
+- Established configuration synchronization system with support for multiple deployment scripts
 
 ## Implementation Details
 
@@ -310,6 +342,21 @@ cd $HOME/shiroi/deploy
 - Flexible rollback options
 - Clear version identification
 - Automated cleanup of old versions
+
+### Container Status Detection Enhancement
+**Migration from `docker compose ps` to `docker ps`:**
+- **Problem**: `docker compose ps` requires compose context and can be unreliable
+- **Solution**: Use `docker ps` with container name filters for more robust detection
+- **Implementation**: 
+  - First-time deployment detection: `docker ps --filter "name=shiroi-nginx"`
+  - Container health checking: `docker ps` + `docker inspect` combination
+  - Status reporting: `docker ps --filter "name=shiroi" --format` for consistent output
+
+**Key Advantages:**
+- More reliable container detection across different Docker environments
+- Faster execution (no compose file parsing needed)
+- Better compatibility with various Docker setups
+- More precise container filtering and status checking
 
 ## Error Handling and Recovery
 

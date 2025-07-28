@@ -188,7 +188,7 @@ jobs:
 
           # Transfer compose files and configs
           echo "Transferring compose files..."
-          rsync -avz -e 'ssh -i ~/.ssh/id_rsa -p ${{ secrets.PORT || 22 }}' docker-compose.yml deploy-zero-downtime.sh sync-configs.sh shiroi.env.example compose.env.example ${{ secrets.USER }}@${{ secrets.HOST }}:/home/${{ secrets.USER }}/shiroi/deploy/
+          rsync -avz -e 'ssh -i ~/.ssh/id_rsa -p ${{ secrets.PORT || 22 }}' docker-compose.yml deploy-zero-downtime.sh first-time-deploy.sh sync-configs.sh shiroi.env.example compose.env.example ${{ secrets.USER }}@${{ secrets.HOST }}:/home/${{ secrets.USER }}/shiroi/deploy/
 
           echo "Transferring nginx directory..."
           rsync -avz -e 'ssh -i ~/.ssh/id_rsa -p ${{ secrets.PORT || 22 }}' nginx/ ${{ secrets.USER }}@${{ secrets.HOST }}:/home/${{ secrets.USER }}/shiroi/deploy/nginx/
@@ -251,25 +251,13 @@ jobs:
             ./sync-configs.sh
 
             # 检查是否是首次部署
-            if ! docker compose ps shiroi-nginx | grep -q "Up"; then
-              echo "First time deployment - starting all services..."
-              export SHIROI_IMAGE=$NEW_IMAGE
-              docker compose up -d
-              
-              # 等待服务启动
-              sleep 30
-              
-              # 验证服务状态
-              if docker compose ps | grep -q "unhealthy"; then
-                echo "Some services are unhealthy!"
-                docker compose ps
-                docker compose logs
-                exit 1
-              fi
-              
-              echo "Initial deployment completed successfully"
+            if ! docker ps --filter "name=shiroi-nginx" --filter "status=running" --format "{{.Names}}" | grep -q nginx; then
+              echo "First time deployment detected - using first-time-deploy.sh..."
+              chmod +x ./first-time-deploy.sh
+              ./first-time-deploy.sh $NEW_IMAGE
             else
               echo "Performing zero-downtime deployment..."
+              chmod +x ./deploy-zero-downtime.sh
               ./deploy-zero-downtime.sh deploy $NEW_IMAGE
             fi
 

@@ -129,9 +129,9 @@ switch_upstream() {
     # Reload nginx configuration
     print_info "Reloading nginx configuration..."
     
-    # Debug: Show docker compose services
-    print_info "Available docker compose services:"
-    docker compose ps --services 2>/dev/null || docker-compose ps --services 2>/dev/null || true
+    # Debug: Show running containers
+    print_info "Currently running shiroi containers:"
+    docker ps --filter "name=shiroi" --format "table {{.Names}}\t{{.Status}}\t{{.Ports}}" || true
     
     # Check if nginx container is running first
     if ! docker ps --filter "name=$NGINX_CONTAINER" --format "{{.Names}}" | grep -q "^${NGINX_CONTAINER}$"; then
@@ -445,7 +445,7 @@ debug() {
     docker ps -a --filter "$CONTAINER_NAME_FILTER" || true
     
     print_info "Docker Compose services status:"
-    docker compose ps 2>/dev/null || docker-compose ps 2>/dev/null || print_warning "Could not get compose services"
+    docker ps --filter "name=shiroi" --format "table {{.Names}}\t{{.Status}}\t{{.Ports}}" 2>/dev/null || print_warning "Could not get container status"
     
     print_info "Environment variables:"
     echo "SHIROI_IMAGE=${SHIROI_IMAGE:-not set}"
