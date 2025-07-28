@@ -6,14 +6,34 @@
 set -e
 
 # Configuration
+# Docker Compose settings
 COMPOSE_FILE="docker-compose.yml"
 PROJECT_NAME="shiroi"
-NGINX_CONTAINER="shiroi-nginx"
-BLUE_CONTAINER="shiroi-app-blue"
-GREEN_CONTAINER="shiroi-app-green"
-UPSTREAM_CONF="nginx/upstream.conf"
-HEALTH_CHECK_TIMEOUT=60
-HEALTH_CHECK_INTERVAL=5
+
+# Container and service names
+NGINX_CONTAINER="shiroi-nginx"          # Nginx container name
+NGINX_SERVICE="shiroi-nginx"            # Nginx service name in compose
+BLUE_CONTAINER="shiroi-app-blue"        # Blue app container name
+BLUE_SERVICE="shiroi-app-blue"          # Blue app service name in compose
+GREEN_CONTAINER="shiroi-app-green"      # Green app container name
+GREEN_SERVICE="shiroi-app-green"        # Green app service name in compose
+
+# Configuration paths and directories
+NGINX_CONFIG_DIR="nginx"                # Nginx config directory
+UPSTREAM_CONF="nginx/upstream.conf"     # Active upstream config file
+
+# Health check settings
+HEALTH_CHECK_TIMEOUT=60                 # Timeout for health checks (seconds)
+HEALTH_CHECK_INTERVAL=5                 # Interval between health checks (seconds)
+
+# Service settings
+GREEN_PROFILE="green"                   # Docker compose profile for green deployment
+APP_PORT="2323"                         # Application port
+NGINX_HEALTH_URL="http://localhost:12333/nginx-health"  # Nginx health check URL
+
+# Docker command settings
+CONTAINER_NAME_FILTER="name=shiroi"     # Filter for container queries
+NGINX_RELOAD_CMD="nginx -s reload"      # Nginx reload command
 
 # Colors for output
 RED='\033[0;31m'
@@ -71,7 +91,7 @@ get_current_color() {
     if [ "$blue_running" = "1" ]; then
         if [ "$green_running" = "1" ]; then
             # Both running, check nginx upstream config
-            if grep -q "shiroi-app-green:2323" $UPSTREAM_CONF && ! grep -q "# server shiroi-app-green:2323" $UPSTREAM_CONF; then
+            if grep -q "${GREEN_SERVICE}:${APP_PORT}" $UPSTREAM_CONF && ! grep -q "# server ${GREEN_SERVICE}:${APP_PORT}" $UPSTREAM_CONF; then
                 echo "green"
             else
                 echo "blue"
@@ -90,7 +110,7 @@ get_current_color() {
 switch_upstream() {
     local target_color=$1
     local backup_file="${UPSTREAM_CONF}.backup.$(date +%s)"
-    local source_file="nginx/upstream-${target_color}.conf"
+    local source_file="${NGINX_CONFIG_DIR}/upstream-${target_color}.conf"
     
     print_info "Switching nginx upstream to $target_color..."
     
@@ -108,17 +128,72 @@ switch_upstream() {
     
     # Reload nginx configuration
     print_info "Reloading nginx configuration..."
-    docker compose exec $NGINX_CONTAINER nginx -s reload
     
-    if [ $? -eq 0 ]; then
+    # Debug: Show docker compose services
+    print_info "Available docker compose services:"
+    docker compose ps --services 2>/dev/null || docker-compose ps --services 2>/dev/null || true
+    
+    # Check if nginx container is running first
+    if ! docker ps --filter "name=$NGINX_CONTAINER" --format "{{.Names}}" | grep -q "^${NGINX_CONTAINER}$"; then
+        print_error "Nginx container $NGINX_CONTAINER is not running"
+        print_info "Starting nginx service..."
+        if ! docker compose up -d $NGINX_SERVICE 2>/dev/null; then
+            print_warning "docker compose failed, trying docker-compose..."
+            docker-compose up -d $NGINX_SERVICE 2>/dev/null || true
+        fi
+        sleep 5
+    fi
+    
+    # Try to reload nginx with error handling
+    print_info "Attempting to reload nginx configuration..."
+    local reload_success=false
+    
+    # Try modern docker compose syntax first
+    if docker compose exec $NGINX_SERVICE $NGINX_RELOAD_CMD 2>/dev/null; then
+        reload_success=true
+    # Fallback to legacy docker-compose syntax
+    elif docker-compose exec $NGINX_SERVICE $NGINX_RELOAD_CMD 2>/dev/null; then
+        reload_success=true
+    # Fallback to direct docker exec
+    elif docker exec $NGINX_CONTAINER $NGINX_RELOAD_CMD 2>/dev/null; then
+        reload_success=true
+    fi
+    
+    if [ "$reload_success" = true ]; then
         print_success "Nginx configuration reloaded successfully"
         rm -f $backup_file
         return 0
     else
-        print_error "Failed to reload nginx configuration, restoring backup"
+        print_error "Failed to reload nginx configuration with all methods, restoring backup"
         mv $backup_file $UPSTREAM_CONF
-        docker compose exec $NGINX_CONTAINER nginx -s reload
+        # Try to reload again with the backup config (silent)
+        docker compose exec $NGINX_SERVICE $NGINX_RELOAD_CMD 2>/dev/null || \
+        docker-compose exec $NGINX_SERVICE $NGINX_RELOAD_CMD 2>/dev/null || \
+        docker exec $NGINX_CONTAINER $NGINX_RELOAD_CMD 2>/dev/null || true
         return 1
+    fi
+}
+
+# Function to clean up containers
+cleanup_container() {
+    local container_name=$1
+    
+    print_info "Cleaning up container: $container_name"
+    
+    # Check if container exists (running or stopped)
+    if docker ps -a --filter "name=$container_name" --format "{{.Names}}" | grep -q "^${container_name}$"; then
+        print_info "Found existing container $container_name, removing it..."
+        
+        # Stop container if it's running
+        if docker ps --filter "name=$container_name" --format "{{.Names}}" | grep -q "^${container_name}$"; then
+            docker stop $container_name
+        fi
+        
+        # Remove container
+        docker rm $container_name
+        print_success "Container $container_name removed successfully"
+    else
+        print_info "No existing container $container_name found"
     fi
 }
 
@@ -149,6 +224,17 @@ deploy() {
     
     print_info "Starting zero-downtime deployment with image: $new_image"
     
+    # Clean up any orphan containers first
+    print_info "Checking for orphan containers..."
+    docker compose down --remove-orphans > /dev/null 2>&1 || true
+    
+    # Ensure nginx service is running
+    print_info "Ensuring nginx service is running..."
+    if ! docker compose up -d $NGINX_SERVICE 2>/dev/null; then
+        print_warning "docker compose failed, trying docker-compose..."
+        docker-compose up -d $NGINX_SERVICE 2>/dev/null || true
+    fi
+    
     # Get current active color
     local current_color=$(get_current_color)
     print_info "Current active color: $current_color"
@@ -163,19 +249,34 @@ deploy() {
     
     print_info "Deploying to: $target_color"
     
+    # Clean up target container if it exists
+    local target_container
+    if [ "$target_color" = "green" ]; then
+        target_container=$GREEN_CONTAINER
+    else
+        target_container=$BLUE_CONTAINER
+    fi
+    
+    cleanup_container $target_container
+    
     # Set image in environment
     export SHIROI_IMAGE=$new_image
     
     # Start target container
     print_info "Starting $target_color container..."
     if [ "$target_color" = "green" ]; then
-        docker compose --profile green up -d shiroi-app-green
+        if ! docker compose --profile $GREEN_PROFILE up -d --remove-orphans $GREEN_SERVICE 2>/dev/null; then
+            print_warning "docker compose failed, trying docker-compose..."
+            docker-compose --profile $GREEN_PROFILE up -d --remove-orphans $GREEN_SERVICE 2>/dev/null || true
+        fi
     else
-        docker compose up -d shiroi-app-blue
+        if ! docker compose up -d --remove-orphans $BLUE_SERVICE 2>/dev/null; then
+            print_warning "docker compose failed, trying docker-compose..."
+            docker-compose up -d --remove-orphans $BLUE_SERVICE 2>/dev/null || true
+        fi
     fi
     
     # Wait for container to be healthy
-    local target_container
     if [ "$target_color" = "green" ]; then
         target_container=$GREEN_CONTAINER
     else
@@ -200,7 +301,7 @@ deploy() {
     
     # Verify nginx is serving correctly
     print_info "Verifying nginx is serving correctly..."
-    if ! curl -f http://localhost:12333/nginx-health > /dev/null 2>&1; then
+    if ! curl -f $NGINX_HEALTH_URL > /dev/null 2>&1; then
         print_error "Nginx health check failed, rolling back..."
         switch_upstream $current_color
         docker compose stop $target_container
@@ -224,7 +325,7 @@ deploy() {
     print_info "Active color is now: $target_color"
     
     # Show status
-    docker ps --filter "name=shiroi-"
+    docker ps --filter "$CONTAINER_NAME_FILTER-"
 }
 
 # Function to rollback
@@ -245,14 +346,27 @@ rollback() {
     
     print_info "Rolling back from $current_color to $target_color"
     
-    # Start target container
+    # Clean up target container if it exists
     local target_container
     if [ "$target_color" = "green" ]; then
         target_container=$GREEN_CONTAINER
-        docker compose --profile green up -d shiroi-app-green
     else
         target_container=$BLUE_CONTAINER
-        docker compose up -d shiroi-app-blue
+    fi
+    
+    cleanup_container $target_container
+    
+    # Start target container
+    if [ "$target_color" = "green" ]; then
+        if ! docker compose --profile $GREEN_PROFILE up -d --remove-orphans $GREEN_SERVICE 2>/dev/null; then
+            print_warning "docker compose failed, trying docker-compose..."
+            docker-compose --profile $GREEN_PROFILE up -d --remove-orphans $GREEN_SERVICE 2>/dev/null || true
+        fi
+    else
+        if ! docker compose up -d --remove-orphans $BLUE_SERVICE 2>/dev/null; then
+            print_warning "docker compose failed, trying docker-compose..."
+            docker-compose up -d --remove-orphans $BLUE_SERVICE 2>/dev/null || true
+        fi
     fi
     
     # Check health and switch
@@ -271,10 +385,71 @@ status() {
     local current_color=$(get_current_color)
     print_info "Current active color: $current_color"
     print_info "Container status:"
-    docker ps --filter "name=shiroi-"
+    docker ps --filter "$CONTAINER_NAME_FILTER-"
     
     print_info "Nginx upstream configuration:"
     grep -A 10 "upstream shiroi_backend" $UPSTREAM_CONF
+}
+
+# Function to clean up all containers and orphans
+cleanup_all() {
+    print_info "Cleaning up all shiroi containers and orphans..."
+    
+    # Stop and remove all project containers with orphan cleanup
+    docker compose down --remove-orphans
+    
+    # Remove any remaining shiroi containers manually
+    for container in $BLUE_CONTAINER $GREEN_CONTAINER $NGINX_CONTAINER; do
+        if docker ps -a --filter "name=$container" --format "{{.Names}}" | grep -q "^${container}$"; then
+            print_info "Removing orphan container: $container"
+            docker stop $container 2>/dev/null || true
+            docker rm $container 2>/dev/null || true
+        fi
+    done
+    
+    print_success "Cleanup completed"
+}
+
+# Function to debug deployment environment
+debug() {
+    print_info "=== Shiroi Deployment Debug Information ==="
+    
+    print_info "Docker version:"
+    docker --version
+    
+    print_info "Docker Compose version:"
+    docker compose version 2>/dev/null || docker-compose version 2>/dev/null || echo "Docker Compose not found"
+    
+    print_info "Current directory:"
+    pwd
+    
+    print_info "Files in current directory:"
+    ls -la
+    
+    print_info "Docker Compose file check:"
+    if [ -f "docker-compose.yml" ]; then
+        print_success "docker-compose.yml found"
+        print_info "Services defined in docker-compose.yml:"
+        grep "^  [a-zA-Z]" docker-compose.yml | sed 's/:$//' || true
+    else
+        print_error "docker-compose.yml not found"
+    fi
+    
+    print_info "Nginx config files:"
+    ls -la $NGINX_CONFIG_DIR/ 2>/dev/null || print_warning "nginx directory not found"
+    
+    print_info "Running containers:"
+    docker ps --filter "$CONTAINER_NAME_FILTER" || true
+    
+    print_info "All shiroi-related containers (including stopped):"
+    docker ps -a --filter "$CONTAINER_NAME_FILTER" || true
+    
+    print_info "Docker Compose services status:"
+    docker compose ps 2>/dev/null || docker-compose ps 2>/dev/null || print_warning "Could not get compose services"
+    
+    print_info "Environment variables:"
+    echo "SHIROI_IMAGE=${SHIROI_IMAGE:-not set}"
+    echo "HOME=${HOME:-not set}"
 }
 
 # Function to show help
@@ -289,12 +464,16 @@ show_help() {
     echo "  status           Show current deployment status"
     echo "  stop             Stop all services"
     echo "  start            Start all services"
+    echo "  cleanup          Clean up all containers and orphans"
+    echo "  debug            Show debug information"
     echo "  help             Show this help message"
     echo
     echo "Examples:"
     echo "  $0 deploy shiroi:abc123"
     echo "  $0 rollback"
     echo "  $0 status"
+    echo "  $0 cleanup"
+    echo "  $0 debug"
 }
 
 # Main script logic
@@ -314,7 +493,13 @@ case "${1:-help}" in
         ;;
     "start")
         print_info "Starting services..."
-        docker compose up -d
+        docker compose up -d --remove-orphans
+        ;;
+    "cleanup")
+        cleanup_all
+        ;;
+    "debug")
+        debug
         ;;
     "help" | "-h" | "--help" | *)
         show_help
