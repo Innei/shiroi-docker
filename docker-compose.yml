@@ -9,6 +9,7 @@ services:
       - $HOME/shiroi/deploy/nginx/upstream.conf:/etc/nginx/conf.d/upstream.conf:ro
     depends_on:
       - shiroi-app-blue
+      - shiroi-app-green
     restart: unless-stopped
     healthcheck:
       test: ['CMD', 'curl', '-f', 'http://localhost/nginx-health']
@@ -64,8 +65,9 @@ services:
           memory: 500m
         reservations:
           memory: 256m
-    profiles:
-      - green
+    # Remove profiles to allow both containers to run simultaneously
+    # profiles:
+    #   - green
 
 networks:
   default:
