@@ -1,0 +1,40 @@
+name: Verify pnpm install (temporary)
+
+on:
+  workflow_dispatch:
+    inputs:
+      source_ref:
+        description: 'Git ref in innei-dev/yohaku to verify'
+        required: false
+        default: main
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          repository: innei-dev/yohaku
+          token: ${{ secrets.GH_PAT }}
+          ref: ${{ inputs.source_ref }}
+          fetch-depth: 1
+          submodules: recursive
+
+      - uses: pnpm/action-setup@v6
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+
+      - name: Link yohaku-oss node_modules
+        run: ln -sfn ../node_modules yohaku-oss/node_modules
+
+      - name: Install JS dependencies
+        run: pnpm install --frozen-lockfile --filter @yohaku/mobile...
+
+      - name: pnpm version
+        run: pnpm --version
+
+      - name: Fingerprint
+        working-directory: apps/mobile
+        run: ./node_modules/.bin/fingerprint fingerprint:generate --platform ios | head -c 200
