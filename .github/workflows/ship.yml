@@ -127,7 +127,10 @@ jobs:
           node-version: 22
 
       - name: Install JS dependencies
-        run: pnpm install --frozen-lockfile --filter @yohaku/mobile...
+        # pnpm 12 skips node_modules/.bin for symlinked workspace members
+        # (apps/mobile, packages/rich-content, packages/dom-webview) on
+        # filtered installs, so install the whole workspace.
+        run: pnpm install --frozen-lockfile
 
       - name: Compute fingerprint
         id: fp
@@ -217,7 +220,10 @@ jobs:
 
       - name: Install app dependencies
         working-directory: yohaku
-        run: pnpm install --frozen-lockfile --filter @yohaku/mobile...
+        # pnpm 12 skips node_modules/.bin for symlinked workspace members
+        # (apps/mobile, packages/rich-content, packages/dom-webview) on
+        # filtered installs, so install the whole workspace.
+        run: pnpm install --frozen-lockfile
 
       - name: Install easc dependencies
         working-directory: expo-ota
