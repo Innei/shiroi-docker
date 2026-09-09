@@ -130,11 +130,14 @@ jobs:
         with:
           node-version: 22
 
+      - name: Link yohaku-oss node_modules
+        # pnpm 12 resolves a symlinked member's bin targets before the root
+        # lifecycle scripts run, so this hop must exist before install or
+        # apps/mobile/node_modules/.bin is never created.
+        run: ln -sfn ../node_modules yohaku-oss/node_modules
+
       - name: Install JS dependencies
-        # pnpm 12 skips node_modules/.bin for symlinked workspace members
-        # (apps/mobile, packages/rich-content, packages/dom-webview) on
-        # filtered installs, so install the whole workspace.
-        run: pnpm install --frozen-lockfile
+        run: pnpm install --frozen-lockfile --filter @yohaku/mobile...
 
       - name: Compute and verify fingerprint
         id: fp
@@ -202,11 +205,14 @@ jobs:
         with:
           node-version: 22
 
+      - name: Link yohaku-oss node_modules
+        # pnpm 12 resolves a symlinked member's bin targets before the root
+        # lifecycle scripts run, so this hop must exist before install or
+        # apps/mobile/node_modules/.bin is never created.
+        run: ln -sfn ../node_modules yohaku-oss/node_modules
+
       - name: Install JS dependencies
-        # pnpm 12 skips node_modules/.bin for symlinked workspace members
-        # (apps/mobile, packages/rich-content, packages/dom-webview) on
-        # filtered installs, so install the whole workspace.
-        run: pnpm install --frozen-lockfile
+        run: pnpm install --frozen-lockfile --filter @yohaku/mobile...
 
       - name: Reserve App Store build number
         id: build
