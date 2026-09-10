@@ -214,6 +214,26 @@ jobs:
       - name: Install JS dependencies
         run: pnpm install --frozen-lockfile --filter @yohaku/mobile...
 
+      - name: Checkout deploy scripts
+        uses: actions/checkout@v6
+        with:
+          path: .deploy
+          sparse-checkout: .github/scripts
+
+      - name: Resolve App Store marketing version
+        working-directory: ${{ env.MOBILE_DIR }}
+        env:
+          APP_BUNDLE_ID: ${{ env.YOHAKU_BUNDLE_ID }}
+          ASC_API_KEY_P8: ${{ secrets.ASC_API_KEY_P8 }}
+          ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
+          ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
+          GH_TOKEN: ${{ secrets.GH_PAT }}
+          OVERLAY_EXPO_PATH: apps/mobile-overlay/expo.json
+        run: |
+          set -euo pipefail
+          MARKETING_VERSION="$(./node_modules/.bin/expo config --json | jq -r '.version // empty')" \
+            node "$GITHUB_WORKSPACE/.deploy/.github/scripts/resolve-marketing-version.mjs"
+
       - name: Reserve App Store build number
         id: build
         working-directory: ${{ env.MOBILE_DIR }}
